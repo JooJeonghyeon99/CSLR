@@ -305,8 +305,8 @@ def _main(cfg, output_file):
         #     prefix_tokens = build_lang_prompt_tensor( # prompt를 prefix_token으로 전달
         #         dictionary, cfg.override.code_switching, device, torch.long, batch_size, add_bos=False 
         #     )
-        #     syms = [task.target_dictionary.symbols[t] for t in prefix_tokens[0].tolist()] #삐띠니가 준 logger: prefix_tokens[0] (언어 토큰) -> target_dictionary에서 각 step별 symbols
-        #     logger.info(f"[CS-PREFIX] {cfg.override.code_switching} -> {syms}") #삐띠니가 준 logger
+        #     syms = [task.target_dictionary.symbols[t] for t in prefix_tokens[0].tolist()] #logger: prefix_tokens[0] (언어 토큰) -> target_dictionary에서 각 step별 symbols
+        #     logger.info(f"[CS-PREFIX] {cfg.override.code_switching} -> {syms}") #logger
         #     # ----------------------------------------------
         #     #         encoder에서 변경한거 적용(추가)
         #     # ----------------------------------------------
