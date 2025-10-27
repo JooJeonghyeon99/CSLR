@@ -336,7 +336,7 @@ class encodercfg(FairseqDataclass):
         metadata={"help": "share decoder input and output embeddings"},
     )
     no_scale_embedding: bool = field(default=True, metadata={'help': 'scale embedding'})
-    # code_switching: Optional[str] = field(default=None, metadata={'help': 'concatenate prompt'})  # 정현: cs용 인자 추가
+    # code_switching: Optional[str] = field(default=None, metadata={'help': 'concatenate prompt'})  #cs용 인자 추가
 
 
 @dataclass
@@ -729,7 +729,7 @@ class utut_seq2seq(FairseqEncoderDecoderModel):
         super().__init__(encoder, decoder)
         self.cfg = cfg
         self.freeze_finetune_updates = cfg.freeze_finetune_updates #finetuning 한거 frozen
-        self.language_embedding = nn.Embedding(num_embeddings=5, embedding_dim=1024) #정현: 언어 5개 index로 받아서 1024 벡터로 변환해서 encoder 입력에 넣어줌
+        self.language_embedding = nn.Embedding(num_embeddings=5, embedding_dim=1024) #언어 5개 index로 받아서 1024 벡터로 변환해서 encoder 입력에 넣어줌
         self.ctc_proj = nn.Linear(1024, len(tgt_dict)) #ctc 학습용 projection layer
         self.unit_encoder = unit_encoder #pretraining용
         self.lang_tokens = ["<en>", "<it>", "<fr>", "<es>", "<pt>"]

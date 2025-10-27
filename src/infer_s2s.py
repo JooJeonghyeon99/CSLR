@@ -43,9 +43,7 @@ logging.root.setLevel(logging.INFO)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-config_path = str(Path(__file__).resolve().parent / "conf")  # 정현: hydra 버전 안맞아서 str으로 감싸줌
-# print("config_path is!!", config_path)  # 정현: 추가
-
+config_path = str(Path(__file__).resolve().parent / "conf")  #hydra 버전 안맞아서 str으로 감싸줌
 
 @dataclass
 class OverrideConfig(FairseqDataclass):
@@ -55,7 +53,7 @@ class OverrideConfig(FairseqDataclass):
     modalities: List[str] = field(default_factory=lambda: [""], metadata={'help': 'which modality to use'})
     data: Optional[str] = field(default=None, metadata={'help': 'path to test data directory'})
     label_dir: Optional[str] = field(default=None, metadata={'help': 'path to test label directory'})
-    code_switching: Optional[str] = field(default=None, metadata={'help': 'concatenate prompt'})  # 정현: cs용 인자 추가
+    code_switching: Optional[str] = field(default=None, metadata={'help': 'concatenate prompt'})  #cs용 인자 추가
 
 
 @dataclass
@@ -96,7 +94,7 @@ def main(cfg: DictConfig):
 
 def get_symbols_to_strip_from_output(generator):
     if hasattr(generator, "symbols_to_strip_from_output"):
-        return generator.symbols_to_strip_from_output  # 정현: original
+        return generator.symbols_to_strip_from_output
     else:
         return {generator.eos, generator.pad}
 
@@ -112,7 +110,7 @@ def _main(cfg, output_file):
         logger.addHandler(logging.StreamHandler(sys.stdout))
 
     utils.import_user_module(cfg.common)
-    models, saved_cfg, task = checkpoint_utils.load_model_ensemble_and_task([cfg.common_eval.path])  # 정현: pt 불러옴
+    models, saved_cfg, task = checkpoint_utils.load_model_ensemble_and_task([cfg.common_eval.path])
     models = [model.eval().cuda() for model in models]
     print('******************', saved_cfg.task)
     saved_cfg.task.modalities = cfg.override.modalities
@@ -144,7 +142,7 @@ def _main(cfg, output_file):
         OmegaConf.set_struct(saved_cfg.task, True)
         
     if cfg.override.data is not None:
-        task.cfg.data = cfg.override.data  # 정현: 그냥 label path
+        task.cfg.data = cfg.override.data  #label path
         
         #★★★(keep saved task config paths in sync)
         if OmegaConf.is_config(getattr(saved_cfg, "task", None)):
@@ -296,7 +294,7 @@ def _main(cfg, output_file):
         if "net_input" not in sample:
             continue
         
-        prefix_tokens = None  # 정현: 위치 옮김
+        prefix_tokens = None  #위치 옮김
 
         # -----------------------------------------
         #          Concatenate prompt 넣기

@@ -16,7 +16,7 @@ def load_video(path):
             cap = cv2.VideoCapture(path) 
             frames = []
             while True:
-                ret, frame = cap.read() # 윤진: 프레임 받아옴
+                ret, frame = cap.read()
                 if ret:
                     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                     frames.append(frame)

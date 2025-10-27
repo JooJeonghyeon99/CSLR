@@ -58,7 +58,7 @@ def load_audio_visual(manifest_path, max_keep, min_keep, frame_rate, label_paths
             else:
                 video_path = items[1]
                 audio_path = items[2]
-                audio_id = items[0]  # 정현: 이게 fid
+                audio_id = items[0]  #fid
                 names.append((video_path, audio_path + ':' + audio_id))
                 inds.append(ind)
                 sizes.append(sz)
@@ -597,7 +597,7 @@ class AVHubertDataset_mvsr(FairseqDataset):
         lengths = torch.LongTensor([len(t) for t in targets])
         ntokens = lengths.sum().item()
         pad, eos = self.label_processors[0].dictionary.pad(), self.label_processors[0].dictionary.eos()
-        targets_ = self.collate_tokens(targets, pad_idx=pad, eos_idxs=lang, left_pad=False)  # 정현: lang은 배치크기 B만큼의 언어 ID 리스트
+        targets_ = self.collate_tokens(targets, pad_idx=pad, eos_idxs=lang, left_pad=False)  #lang은 배치크기 B만큼의 언어 ID 리스트
         prev_output_tokens = self.collate_tokens(
             targets, pad_idx=pad, eos_idxs=lang, left_pad=False, move_eos_to_beginning=True
         )

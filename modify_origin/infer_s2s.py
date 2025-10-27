@@ -45,8 +45,7 @@ logging.root.setLevel(logging.INFO)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-config_path = str(Path(__file__).resolve().parent / "conf")  # 정현: hydra 버전 안맞아서 str으로 감싸줌
-# print("config_path is!!", config_path)  # 정현: 추가
+config_path = str(Path(__file__).resolve().parent / "conf")  # hydra 버전 안맞아서 str으로 감싸줌
 
 
 @dataclass
@@ -98,7 +97,7 @@ def main(cfg: DictConfig):
 
 def get_symbols_to_strip_from_output(generator):
     if hasattr(generator, "symbols_to_strip_from_output"):
-        return generator.symbols_to_strip_from_output  # 정현: original
+        return generator.symbols_to_strip_from_output
     else:
         return {generator.eos, generator.pad}
 
@@ -114,7 +113,7 @@ def _main(cfg, output_file):
         logger.addHandler(logging.StreamHandler(sys.stdout))
 
     utils.import_user_module(cfg.common)
-    models, saved_cfg, task = checkpoint_utils.load_model_ensemble_and_task([cfg.common_eval.path])  # 정현: pt 불러옴
+    models, saved_cfg, task = checkpoint_utils.load_model_ensemble_and_task([cfg.common_eval.path])
     models = [model.eval().cuda() for model in models]
     print('******************', saved_cfg.task)
     saved_cfg.task.modalities = cfg.override.modalities
@@ -137,7 +136,7 @@ def _main(cfg, output_file):
     task.cfg.noise_snr = cfg.override.noise_snr
     task.cfg.noise_wav = cfg.override.noise_wav
     if cfg.override.data is not None:
-        task.cfg.data = cfg.override.data  # 정현: 그냥 label path
+        task.cfg.data = cfg.override.data  # label path
     if cfg.override.label_dir is not None:
         task.cfg.label_dir = cfg.override.label_dir
 
@@ -269,19 +268,19 @@ def _main(cfg, output_file):
         if "net_input" not in sample:
             continue
         
-        prefix_tokens = None  # 정현: 위치 옮김
+        prefix_tokens = None  # 위치 옮김
 
         # -----------------------------------------
         #          Concatenate prompt 넣기
         # -----------------------------------------
         # if cfg.override.code_switching:
-        #     batch_size = sample["id"].size(0)  # id: batch에 들어온 samples의 idx모음, 즉 batch에 sample 몇 개 들어있는지?
+        #     batch_size = sample["id"].size(0)  # id: batch에 들어온 samples의 idx모음, 즉 batch에 sample 몇 개 들어있는지
         #     device = models[0].decoder.embed_tokens.weight.device
         #     prefix_tokens = build_lang_prompt_tensor( # prompt를 prefix_token으로 전달
         #         dictionary, cfg.override.code_switching, device, torch.long, batch_size, add_bos=False 
         #     )
-        #     syms = [task.target_dictionary.symbols[t] for t in prefix_tokens[0].tolist()] #삐띠니가 준 logger: prefix_tokens[0] (언어 토큰) -> target_dictionary에서 각 step별 symbols
-        #     logger.info(f"[CS-PREFIX] {cfg.override.code_switching} -> {syms}") #삐띠니가 준 logger
+        #     syms = [task.target_dictionary.symbols[t] for t in prefix_tokens[0].tolist()] #logger: prefix_tokens[0] (언어 토큰) -> target_dictionary에서 각 step별 symbols
+        #     logger.info(f"[CS-PREFIX] {cfg.override.code_switching} -> {syms}") #logger
         #     # ----------------------------------------------
         #     #         encoder에서 변경한거 적용(추가)
         #     # ----------------------------------------------
@@ -298,7 +297,7 @@ def _main(cfg, output_file):
         #     prefix_tokens = sample["target"][:, :cfg.generation.prefix_size]
                 
         if cfg.override.code_switching:
-            batch_size = sample["id"].size(0)  # id: batch에 들어온 samples의 idx모음, 즉 batch에 sample 몇 개 들어있는지?
+            batch_size = sample["id"].size(0)  # id: batch에 들어온 samples의 idx모음, 즉 batch에 sample 몇 개 들어있는지
             device = models[0].decoder.embed_tokens.weight.device
             # ----------------------------------------------
             #         encoder에서 변경한거 적용(추가)

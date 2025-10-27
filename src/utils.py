@@ -22,7 +22,7 @@ def load_video(path):
                     frames.append(frame)
                 else:
                     break
-            frames = np.stack(frames) #윤진: 프레임 
+            frames = np.stack(frames)
             return frames
         except Exception:
             print(f"failed loading {path} ({i} / 3)")
