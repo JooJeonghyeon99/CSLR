@@ -1,0 +1,32 @@
+# Ignore all data folders
+data/
+*.mp4
+*.wav
+*.zip
+*.tar
+*.pth
+*.pt
+data/
+
+outputs/
+finetuning_en/
+src/outputs/
+avhubert/outputs/
+None/
+
+# Ignore logs and cache
+*.log
+*.txt
+__pycache__/
+*.pyc
+
+# Ignore image and model files
+*.png
+*.jpg
+*.jpeg
+*.pth
+*.pt
+
+# Ignore temporary scripts
+scripts/eval_concat_sample.sh
+scripts/eval_sample.sh
