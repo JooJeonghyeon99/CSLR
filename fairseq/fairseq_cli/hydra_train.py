@@ -65,13 +65,12 @@ def hydra_main(cfg: FairseqConfig) -> float:
 
 def cli_main():
     try:
-        from hydra._internal.utils import get_args
-
+        from hydra._internal.utils import get_args 
         cfg_name = get_args().config_name or "config"
+        print("우끼끼끼끼")
     except:
         logger.warning("Failed to get config name from hydra args")
         cfg_name = "config"
-
     hydra_init(cfg_name)
     hydra_main()
 

@@ -1,6 +1,41 @@
 common:
   user_dir: ???
 
+# task:
+#   _name: av_hubert_pretraining_mvsr
+#   # _name: av_hubert_pretraining_mvsr_cs
+#   data: /mnt/aix7804/e-mvsr/labels/en
+#   # data: /mnt/aix7804/e-mvsr/labels/fr-en
+#   label_dir: /mnt/aix7804/e-mvsr/labels/en
+#   # label_dir: /mnt/aix7804/e-mvsr/labels/fr-en
+#   tokenizer_bpe_model: /mnt/aix7804/e-mvsr/spm1000/spm_unigram1000.model
+#   modalities: ["video"]
+#   code_switching: ${override.code_switching}
+
+# override:
+#   # label_dir: /mnt/aix7804/e-mvsr/labels/fr-en
+#   label_dir: /mnt/aix7804/e-mvsr/labels/en
+#   modalities: ["video"]
+#   noise_prob: 0.0
+#   noise_snr: 0
+
+
+task:
+  _name: av_hubert_pretraining_mvsr_cs
+  data: ${override.data}
+  label_dir: ${override.label_dir}
+  tokenizer_bpe_model: /mnt/aix7804/e-mvsr/spm1000/spm_unigram1000.model
+  modalities: ${override.modalities}
+  code_switching: ${override.code_switching}
+
+override:
+  data: /mnt/aix7804/e-mvsr/labels/fr-en
+  label_dir: /mnt/aix7804/e-mvsr/labels/fr-en
+  modalities: ["video"]
+  noise_prob: 0.0
+  noise_snr: 0
+
+
 generation:
   beam: 50
   max_len_a: 1.0
@@ -17,7 +52,3 @@ dataset:
   gen_subset: valid
   num_workers: 0
   #batch_size: 1
-override:
-  noise_prob: 0.0
-  noise_snr: 0
-  modalities: ???

@@ -59,7 +59,7 @@ class Encoder:
         self.cache = {}
 
         try:
-            import regex as re
+            import z_regex.regex as re
 
             self.re = re
         except ImportError:

@@ -13,10 +13,10 @@ from typing import Dict, List, Optional, Tuple
 def load_video(path):
     for i in range(3):
         try:
-            cap = cv2.VideoCapture(path)
+            cap = cv2.VideoCapture(path) 
             frames = []
             while True:
-                ret, frame = cap.read()
+                ret, frame = cap.read() # 윤진: 프레임 받아옴
                 if ret:
                     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                     frames.append(frame)

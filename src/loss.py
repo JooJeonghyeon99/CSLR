@@ -11,7 +11,7 @@ import torch.nn.functional as F
 
 from fairseq import metrics, utils
 from fairseq.criterions import register_criterion
-from fairseq.criterions.label_smoothed_cross_entropy import (
+from fairseq.criterions.label_smoothed_cross_entropy import ( #label smooth?
     LabelSmoothedCrossEntropyCriterion,
     LabelSmoothedCrossEntropyCriterionConfig,
 )
@@ -66,7 +66,7 @@ class LabelSmoothedCrossEntropyWithCtcCriterion(LabelSmoothedCrossEntropyCriteri
                 )
                 * self.ctc_weight
             )
-        loss = ctc_loss + (1-self.ctc_weight)*loss
+        loss = ctc_loss + (1-self.ctc_weight)*loss #auxiliary loss (ctc+attn)
 
         sample_size = (
             sample["target"].size(0) if self.sentence_avg else sample["ntokens"]

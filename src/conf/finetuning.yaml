@@ -18,9 +18,9 @@ checkpoint:
 distributed_training:
   ddp_backend: no_c10d
   find_unused_parameters: false
-  distributed_world_size: 8
+  distributed_world_size: 3
   #distributed_port: 29671
-  nprocs_per_node: 8
+  nprocs_per_node: 3
 
 task:
   _name: av_hubert_pretraining_mvsr
@@ -38,7 +38,7 @@ task:
   modalities: ["video"]
   image_aug: true
   pad_audio: true
-  random_crop: false
+  code_switching: null
 
 dataset:
   num_workers: 6

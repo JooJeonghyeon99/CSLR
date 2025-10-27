@@ -8,7 +8,7 @@ import sys, logging
 import contextlib
 import tempfile
 from argparse import Namespace
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple, Any, Iterable
 import os
 import torch
 import torch.nn as nn
@@ -19,7 +19,7 @@ from fairseq.dataclass.utils import convert_namespace_to_omegaconf
 from fairseq.models import BaseFairseqModel, FairseqEncoder, FairseqEncoderDecoderModel, register_model
 from fairseq.models.hubert.hubert import MASKING_DISTRIBUTION_CHOICES
 from fairseq.tasks import FairseqTask
-from omegaconf import II, MISSING
+from omegaconf import II, MISSING, OmegaConf, DictConfig
 
 from einops import rearrange, repeat
 from collections import OrderedDict
@@ -42,6 +42,39 @@ else:
     from avhubert.decoder import TransformerDecoder
 
 logger = logging.getLogger(__name__)
+
+
+#★★★★★★ helper to align checkpoint task config with runtime overrides
+PREFERRED_TASK_OVERRIDE_KEYS: Iterable[str] = (
+    "data",
+    "label_dir",
+    "tokenizer_bpe_model",
+    "code_switching",
+    "modalities",
+    "noise_wav",
+    "noise_prob",
+    "noise_snr",
+)
+
+
+def _apply_runtime_task_overrides(
+    pretrained_task_cfg: Optional[DictConfig],
+    runtime_task_cfg: Optional[DictConfig],
+    keys: Iterable[str] = PREFERRED_TASK_OVERRIDE_KEYS,
+) -> None:
+    if pretrained_task_cfg is None or runtime_task_cfg is None:
+        return
+    runtime_dict = OmegaConf.to_container(runtime_task_cfg, resolve=True, enum_to_str=True)
+    if not runtime_dict:
+        return
+    OmegaConf.set_struct(pretrained_task_cfg, False)
+    try:
+        for key in keys:
+            if key in runtime_dict and runtime_dict[key] is not None:
+                pretrained_task_cfg[key] = runtime_dict[key]
+    finally:
+        OmegaConf.set_struct(pretrained_task_cfg, True)
+
 
 
 
@@ -303,6 +336,8 @@ class encodercfg(FairseqDataclass):
         metadata={"help": "share decoder input and output embeddings"},
     )
     no_scale_embedding: bool = field(default=True, metadata={'help': 'scale embedding'})
+    # code_switching: Optional[str] = field(default=None, metadata={'help': 'concatenate prompt'})  # 정현: cs용 인자 추가
+
 
 @dataclass
 class AVHubertAsrConfig(FairseqDataclass):
@@ -532,7 +567,10 @@ class HubertEncoder(FairseqEncoder):
             "both pre-training and here"
         )
 
-        w2v_args.task.data = cfg.data
+        if runtime_task_cfg is None and hasattr(cfg, '_parent'):
+            runtime_task_cfg = getattr(cfg._parent, 'task', None)
+        #★★★(ensure pretrained hubert task uses current overrides)
+        _apply_runtime_task_overrides(getattr(w2v_args, 'task', None), runtime_task_cfg)
 
         task = tasks.setup_task(w2v_args.task)
         model = task.build_model(w2v_args.model)
@@ -679,19 +717,22 @@ class HubertEncoderWrapper(FairseqEncoder):
             encoder_out["padding_mask"] = encoder_out[
                 "padding_mask"
             ].index_select(0, new_order)
+        if 'decoder_global_lang_ids' in encoder_out and encoder_out['decoder_global_lang_ids'] is not None:
+            encoder_out['decoder_global_lang_ids'] = encoder_out['decoder_global_lang_ids'].index_select(0, new_order)
         return encoder_out
 
 
 
 @register_model("utut_seq2seq", dataclass=AVHubertSeq2SeqConfig)
 class utut_seq2seq(FairseqEncoderDecoderModel):
-    def __init__(self, encoder, decoder, tgt_dict, cfg, unit_encoder):
+    def __init__(self, encoder, decoder, tgt_dict, cfg, unit_encoder): #tgt_dict=출력 sequence token사전(transcript) (<s>, </s>, <pad>, <unk>), src_dict는 입력 sequence token사전(비디오 유닛, 단어)
         super().__init__(encoder, decoder)
         self.cfg = cfg
-        self.freeze_finetune_updates = cfg.freeze_finetune_updates
-        self.language_embedding = nn.Embedding(num_embeddings=5, embedding_dim=1024)
-        self.ctc_proj = nn.Linear(1024, len(tgt_dict))
-        self.unit_encoder = unit_encoder
+        self.freeze_finetune_updates = cfg.freeze_finetune_updates #finetuning 한거 frozen
+        self.language_embedding = nn.Embedding(num_embeddings=5, embedding_dim=1024) #정현: 언어 5개 index로 받아서 1024 벡터로 변환해서 encoder 입력에 넣어줌
+        self.ctc_proj = nn.Linear(1024, len(tgt_dict)) #ctc 학습용 projection layer
+        self.unit_encoder = unit_encoder #pretraining용
+        self.lang_tokens = ["<en>", "<it>", "<fr>", "<es>", "<pt>"]
         
         src_pth = os.path.dirname(os.path.realpath(__file__))
         utut_state_dict =torch.load(f'{src_pth}/pretrained_models/unit_pretrained/unit_pretrained.pt')['model']
@@ -704,10 +745,10 @@ class utut_seq2seq(FairseqEncoderDecoderModel):
             elif 'decoder' in key:
                 decoder_state_dict[key[8:]] = utut_state_dict[key]
             elif 'language_embedding' in key:
-                language_embedding_dict[key[-6:]] = utut_state_dict[key]
+                language_embedding_dict[key[-6:]] = utut_state_dict[key] # 언어들
         self.unit_encoder.load_state_dict(encoder_state_dict)
-        self.decoder.load_state_dict(decoder_state_dict)
-        self.language_embedding.load_state_dict(language_embedding_dict)
+        self.decoder.load_state_dict(decoder_state_dict, strict=False)
+        self.language_embedding.load_state_dict(language_embedding_dict) # Pretraining에서 학습된 언어 embedding weight만 따로 불러와서 로드하고 사용
 
         
     @classmethod
@@ -734,7 +775,7 @@ class utut_seq2seq(FairseqEncoderDecoderModel):
         }
         
         src_pth = os.path.dirname(os.path.realpath(__file__))
-        mavhubert_pth = f'{src_pth}/pretrained_models/mavhubert/mavhubert.pt'
+        mavhubert_pth = f'{src_pth}/pretrained_models/mavhubert/mavhubert.pt' #미리 학습된 가중치를 읽으면서 w2v_args 인자를 가져옴
         if cfg.w2v_args is None:
             state = checkpoint_utils.load_checkpoint_to_cpu(
                 mavhubert_pth, arg_overrides
@@ -757,15 +798,19 @@ class utut_seq2seq(FairseqEncoderDecoderModel):
             "both pre-training and here"
         )
 
-        w2v_args.task.data = cfg.data
+        runtime_task_cfg = getattr(task, 'cfg', None)
+        #★★★(pretrained task inherits fine-tuning overrides)
+        _apply_runtime_task_overrides(getattr(w2v_args, 'task', None), runtime_task_cfg)
+        if state is not None and 'cfg' in state and hasattr(state['cfg'], 'task'):
+            _apply_runtime_task_overrides(state['cfg'].task, runtime_task_cfg)
 
-        task_pretrain = tasks.setup_task(w2v_args.task)
+        task_pretrain = tasks.setup_task(w2v_args.task) # pretraining할 때 사용한 task 설정
         if state is not None:
             task_pretrain.load_state_dict(state['task_state'])
 
-        encoder_ = task_pretrain.build_model(w2v_args.model)
+        encoder_ = task_pretrain.build_model(w2v_args.model) # finetuning + inference 용
 
-        encoder = HubertEncoderWrapper(encoder_)
+        encoder = HubertEncoderWrapper(encoder_) # finetuniong + inference 용
         if state is not None and not cfg.no_pretrained_weights:
             # set strict=False because we omit some modules
             del state['model']['mask_emb']
@@ -775,11 +820,11 @@ class utut_seq2seq(FairseqEncoderDecoderModel):
 
         transformer_enc_cfg = encodercfg
         transformer_enc_cfg.encoder_layers = 6
-        unit_encoder_ = TransformerEncoder(transformer_enc_cfg)
-        unit_encoder = HubertEncoderWrapper(unit_encoder_)
+        unit_encoder_ = TransformerEncoder(transformer_enc_cfg) # pretraining용 encoder
+        unit_encoder = HubertEncoderWrapper(unit_encoder_) # pretraining용 encoder
         src_dict, tgt_dict = task.source_dictionary, task.target_dictionary
 
-        def build_embedding(dictionary, embed_dim):
+        def build_embedding(dictionary, embed_dim): # token embedding 해주는거
             num_embeddings = len(dictionary)
             padding_idx = dictionary.pad()
             emb = Embedding(num_embeddings, embed_dim, padding_idx=padding_idx)
@@ -787,37 +832,91 @@ class utut_seq2seq(FairseqEncoderDecoderModel):
 
         decoder_embed_tokens = build_embedding(tgt_dict, cfg.decoder_embed_dim)
         decoder = TransformerDecoder(cfg, tgt_dict, decoder_embed_tokens)
-
-        return cls(encoder, decoder, tgt_dict, cfg, unit_encoder)
-
-        
-    def forward(self, **kwargs):
-        ft = self.freeze_finetune_updates <= self.num_updates
-        with torch.no_grad() if not ft else contextlib.ExitStack():
-            output = self.encoder(**kwargs)
-        B, T, D = output['encoder_out'].size()
-        
-        lang_feat = self.language_embedding(torch.tensor(kwargs['languages'], dtype=int).to(output['encoder_out'].device))        
-        lang_feat = repeat(lang_feat, ' b d -> b t d', t=T)
-        output['encoder_out'] = output['encoder_out'] + lang_feat
-        
-        output = self.unit_encoder.utut_forward(output['encoder_out'], kwargs['padding_mask'])
-        decoder_out = self.decoder(prev_output_tokens=kwargs['prev_output_tokens'], encoder_out=output)
-        
-        return decoder_out, output
+        return cls(encoder, decoder, tgt_dict, cfg, unit_encoder) #자기 자신 class의 constructor
     
-    def extract_encoder_output(self, net_input):
-        output = self.encoder(**net_input)
-        B, T, D = output['encoder_out'].size()
-        
-        lang_feat = self.language_embedding(torch.tensor(net_input['languages'], dtype=int).to(output['encoder_out'].device))        
-        lang_feat = repeat(lang_feat, ' b d -> b t d', t=T)
-        output['encoder_out'] = output['encoder_out'] + lang_feat
+    def forward(self, **kwargs): # 전체 모델 inference 때 사용되는 함수 #**kwargs = net_input임 (dictionary)
+            ft = self.freeze_finetune_updates <= self.num_updates #10000 전까진 finetuning 안함
+            with torch.no_grad() if not ft else contextlib.ExitStack():
+                output = self.encoder(**kwargs) 
+            B, T, D = output['encoder_out'].size()
+            
+            # # -----------------------------------------
+            # #    Concatenate prompt (mean embedding) 
+            # # -----------------------------------------
+            # lang_ids = torch.tensor(kwargs['languages'], device=output['encoder_out'].device, dtype=torch.long)
+            # if lang_ids.dim() == 1:
+            #     lang_embed = self.language_embedding(lang_ids) #[B, D]
+            # else:
+            #     concat_embed = self.language_embedding(lang_ids) #[B, K, D] = [batch size, number of language, embedding dimension]
+            #     lang_embed = concat_embed.mean(dim=1) # 언어 개수에 대한 평균값 [B, D] = [batch size, embedding dimension]
+            
+            # logger.info(f"{torch.tensor(kwargs['languages'], dtype=int)=}")
+            
+            # lang_embed = lang_embed.unsqueeze(1).repeat(1, T, 1)
+            # output['encoder_out'] += lang_embed
+            # -----------------------------------------
+            #   Hard gating (frame-wise) if available
+            #   Fallback to global/mean embedding
+            # -----------------------------------------
+            if 'lang_frame_ids' in kwargs and kwargs['lang_frame_ids'] is not None:
+                # lang_frame_ids: [B, T] with values in {0(en),1(it),2(fr),3(es),4(pt)}
+                lfi = kwargs['lang_frame_ids'].to(output['encoder_out'].device).long()
+                # [B, T, D]
+                lang_embed = self.language_embedding(lfi)
+            else:
+                # 기존 전역 임베딩 경로 (단일 언어 혹은 여러 언어 평균)
+                lang_ids = torch.tensor(kwargs['languages'], device=output['encoder_out'].device, dtype=torch.long)
+                if lang_ids.dim() == 1:
+                    lang_embed = self.language_embedding(lang_ids)  # [B, D]
+                else:
+                    concat_embed = self.language_embedding(lang_ids)  # [B, K, D]
+                    lang_embed = concat_embed.mean(dim=1)            # [B, D]
+                lang_embed = lang_embed.unsqueeze(1).repeat(1, T, 1)  # [B, T, D]
+
+            output['encoder_out'] += lang_embed
+            output = self.unit_encoder.utut_forward(output['encoder_out'], kwargs['padding_mask']) # unit을 encoder에 통과시켜서 contextualized representation 얻음
+            
+            output['decoder_lang_embed'] = lang_embed
+            
+            decoder_out = self.decoder(prev_output_tokens=kwargs['prev_output_tokens'], encoder_out=output)
+            return decoder_out, output
+
+
+    def extract_encoder_output(self, net_input): # extract output from encoder-only
+        output = self.encoder(**net_input) #net_input을 dict 형태로 받음
+        B, T, D = output['encoder_out'].size() # [배치, frame수, hidden dim]
+        # # -----------------------------------------
+        # #             Concatenate prompt 
+        # # -----------------------------------------
+        # lang_ids = torch.tensor(net_input['languages'], device=output['encoder_out'].device, dtype=torch.long)
+        # if lang_ids.dim() == 1:
+        #     lang_embed = self.language_embedding(lang_ids) #[B, D]
+        # else:
+        #     concat_embed = self.language_embedding(lang_ids) #[B, K, D] = [batch size, number of language, embedding dimension]
+        #     lang_embed = concat_embed.mean(dim=1) # 언어 개수에 대한 평균값 [B, D] = [batch size, embedding dimension]
+
+        # lang_embed = lang_embed.unsqueeze(1).repeat(1, T, 1)
+        # output['encoder_out'] += lang_embed #두 모양이 같아져서 더해주면 됨
+        # frame-wise 우선, 없으면 전역/평균
+        if 'lang_frame_ids' in net_input and net_input['lang_frame_ids'] is not None:
+            lfi = net_input['lang_frame_ids'].to(output['encoder_out'].device).long()
+            lang_embed = self.language_embedding(lfi)  # [B,T,D]
+        else:
+            lang_ids = torch.tensor(net_input['languages'], device=output['encoder_out'].device, dtype=torch.long)
+            if lang_ids.dim() == 1:
+                lang_embed = self.language_embedding(lang_ids)  # [B, D]
+            else:
+                concat_embed = self.language_embedding(lang_ids)  # [B, K, D]
+                lang_embed = concat_embed.mean(dim=1)            # [B, D]
+            lang_embed = lang_embed.unsqueeze(1).repeat(1, T, 1)  # [B, T, D]
+
+        output['encoder_out'] += lang_embed        
         
         output = self.unit_encoder.utut_forward(output['encoder_out'], net_input['padding_mask'])
         
         return output
 
+    
     def get_ctc_target(self, sample):
         return sample["target"], sample["target_lengths"]
 

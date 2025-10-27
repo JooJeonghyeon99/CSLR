@@ -7,7 +7,7 @@
 import argparse
 import fasttext as ft
 import os
-import regex
+import z_regex.regex as regex
 import sys
 
 

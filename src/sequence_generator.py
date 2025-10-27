@@ -287,8 +287,7 @@ class SequenceGenerator(nn.Module):
         elif 'es' in sample['utt_id'][0]:
             tokens[:, 0] = 1003  
         elif 'pt' in sample['utt_id'][0]:
-            tokens[:, 0] = 1004  
-            
+            tokens[:, 0] = 1004              
             
         #tokens[:, 0] = self.eos if bos_token is None else bos_token
         attn: Optional[Tensor] = None

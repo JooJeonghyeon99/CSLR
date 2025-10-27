@@ -178,6 +178,16 @@ class TransformerDecoder(FairseqIncrementalDecoder):
 
         if positions is not None:
             x += positions
+                    
+        lang_embed = encoder_out.get("decoder_lang_embed", None)
+        if lang_embed is not None:
+            # 허용 입력: [B,D] 또는 [B,T,D] (후자는 평균해 [B,D]로)
+            if lang_embed.dim() == 3:
+                lang_embed = lang_embed.mean(dim=1)  # [B,D]
+            # 시간축으로 브로드캐스트
+            lang_embed = lang_embed.unsqueeze(1).expand(-1, x.size(1), -1)  # [B,T,D]
+            x = x + lang_embed
+            
         x = F.dropout(x, p=self.dropout, training=self.training)
 
         # B x T x C -> T x B x C
@@ -240,4 +250,3 @@ class TransformerDecoder(FairseqIncrementalDecoder):
 
     def upgrade_state_dict_named(self, state_dict, name):
         return state_dict
-

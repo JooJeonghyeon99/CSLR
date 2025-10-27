@@ -333,7 +333,7 @@ class DistributedTrainingConfig(FairseqDataclass):
         default=False,
         metadata={"help": "if set, use pipeline model parallelism across GPUs"},
     )
-    pipeline_balance: Optional[str] = field(
+    pipeline_baawce: Optional[str] = field(
         default=None,
         metadata={
             "help": "partition the model into N_K pieces, where each piece "

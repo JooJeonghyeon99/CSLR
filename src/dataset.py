@@ -9,7 +9,7 @@ import logging
 import os
 import sys
 import time
-from typing import Any, List, Optional, Union
+from typing import Any, List, Optional, Union, Tuple
 
 import numpy as np
 
@@ -27,14 +27,14 @@ logger = logging.getLogger(__name__)
 
 def load_audio_visual(manifest_path, max_keep, min_keep, frame_rate, label_paths, label_rates, tol=0.1):
     def is_audio_label_aligned(audio_dur, label_durs):
-        return all([abs(audio_dur - label_dur)<tol for label_dur in label_durs])
+        return all([abs(audio_dur - label_dur) < tol for label_dur in label_durs])
 
     n_long, n_short, n_unaligned = 0, 0, 0
-    names, inds, sizes = [], [], []
+    names, inds, sizes, fr_ratios = [], [], [], []
     dur_from_label_list = []
-    is_seq_label = any([x==-1 for x in label_rates])
+    is_seq_label = any([x == -1 for x in label_rates])
     for label_path, label_rate in zip(label_paths, label_rates):
-        label_lengths = [len(line.rstrip().split())/label_rate for line in open(label_path).readlines()]
+        label_lengths = [len(line.rstrip().split()) / label_rate for line in open(label_path).readlines()]
         dur_from_label_list.append(label_lengths)
     dur_from_label_list = list(zip(*dur_from_label_list))
 
@@ -42,20 +42,27 @@ def load_audio_visual(manifest_path, max_keep, min_keep, frame_rate, label_paths
         root = f.readline().strip()
         for ind, line in enumerate(f):
             items = line.strip().split("\t")
-            sz = int(items[-2]) # 
+            sz = int(items[-2])  # frame 수
+            ratio = None
+            if len(items) >= 6:
+                try:
+                    ratio = float(items[-1])  # ratio
+                except Exception:
+                    ratio = None
             if min_keep is not None and sz < min_keep:
                 n_short += 1
             elif max_keep is not None and sz > max_keep:
                 n_long += 1
-            elif (not is_seq_label) and (not is_audio_label_aligned(sz/frame_rate, dur_from_label_list[ind])):
+            elif (not is_seq_label) and (not is_audio_label_aligned(sz / frame_rate, dur_from_label_list[ind])):
                 n_unaligned += 1
             else:
                 video_path = items[1]
                 audio_path = items[2]
-                audio_id = items[0]
-                names.append((video_path, audio_path+':'+audio_id))
+                audio_id = items[0]  # 정현: 이게 fid
+                names.append((video_path, audio_path + ':' + audio_id))
                 inds.append(ind)
                 sizes.append(sz)
+                fr_ratios.append(ratio)
     tot = ind + 1
     logger.info(
         (
@@ -64,24 +71,22 @@ def load_audio_visual(manifest_path, max_keep, min_keep, frame_rate, label_paths
             f"longest-loaded={max(sizes)}, shortest-loaded={min(sizes)}"
         )
     )
-    return root, names, inds, tot, sizes
+    return root, names, inds, tot, sizes, fr_ratios
+
 
 def load_label(label_path, inds, tot):
     with open(label_path) as f:
         labels = [line.rstrip() for line in f]
-        assert (
-            len(labels) == tot
-        ), f"number of labels does not match ({len(labels)} != {tot})"
+        assert (len(labels) == tot), f"number of labels does not match ({len(labels)} != {tot})"
         labels = [labels[i] for i in inds]
     return labels
 
 
+# PATCH: offsets는 바이트 기준으로 계산/읽기(UTF-8 안전)
 def load_label_offset(label_path, inds, tot):
-    with open(label_path) as f:
-        code_lengths = [len(line.encode("utf-8")) for line in f]
-        assert (
-            len(code_lengths) == tot
-        ), f"number of labels does not match ({len(code_lengths)} != {tot})"
+    with open(label_path, 'rb') as f:
+        code_lengths = [len(line) for line in f]  # bytes length
+        assert (len(code_lengths) == tot), f"number of labels does not match ({len(code_lengths)} != {tot})"
         offsets = list(itertools.accumulate([0] + code_lengths))
         offsets = [(offsets[i], offsets[i + 1]) for i in inds]
     return offsets
@@ -121,50 +126,61 @@ def verify_label_lengths(
             )
             num_invalid += 1
     if num_invalid > 0:
-        logger.warning(
-            f"total {num_invalid} (audio, label) pairs with mismatched lengths"
-        )
+        logger.warning(f"total {num_invalid} (audio, label) pairs with mismatched lengths")
 
 
 class AVHubertDataset_mvsr(FairseqDataset):
     def __init__(
-            self,
-            manifest_path: str,
-            sample_rate: float,
-            label_paths: List[str],
-            label_rates: Union[List[float], float],  # -1 for sequence labels
-            pad_list: List[str],
-            eos_list: List[str],
-            label_processors: Optional[List[Any]] = None,
-            max_keep_sample_size: Optional[int] = None,
-            min_keep_sample_size: Optional[int] = None,
-            max_sample_size: Optional[int] = None,
-            shuffle: bool = True,
-            pad_audio: bool = False,
-            normalize: bool = False,
-            store_labels: bool = True,
-            random_crop: bool = False,
-            single_target: bool = False,
-            stack_order_audio: int=1,
-            skip_verify: bool=False,
-            image_mean: float=0,
-            image_std: float=1,
-            image_crop_size: int=88,
-            image_aug: bool=False,
-            modalities: Optional[List[str]]=None,
-            is_s2s=False,
-            noise_fn=None,
-            noise_prob=0,
-            noise_snr=0,
-            noise_num=1
+        self,
+        manifest_path: str,
+        sample_rate: float,
+        label_paths: List[str],
+        label_rates: Union[List[float], float],  # -1 for sequence labels
+        pad_list: List[str],
+        eos_list: List[str],
+        label_processors: Optional[List[Any]] = None,
+        max_keep_sample_size: Optional[int] = None,
+        min_keep_sample_size: Optional[int] = None,
+        max_sample_size: Optional[int] = None,
+        shuffle: bool = True,
+        pad_audio: bool = False,
+        normalize: bool = False,
+        store_labels: bool = True,
+        random_crop: bool = False,
+        single_target: bool = False,
+        stack_order_audio: int = 1,
+        skip_verify: bool = False,
+        image_mean: float = 0,
+        image_std: float = 1,
+        image_crop_size: int = 88,
+        image_aug: bool = False,
+        modalities: Optional[List[str]] = None,
+        is_s2s=False,
+        noise_fn=None,
+        noise_prob=0,
+        noise_snr=0,
+        noise_num=1,
+        code_switching: Optional[str] = None,
     ):
+        self.code_switching = code_switching
+        self.cs_pair_ids = self._parse_cs_to_ids(self.code_switching)  # code switching 인자 받음
+        if self.code_switching:
+            logger.info(f"[Code Switching] code_switching='{self.code_switching}', parsed={self.cs_pair_ids}")
         self.label_rates = (
             [label_rates for _ in range(len(label_paths))]
             if isinstance(label_rates, int)
             else label_rates
         )
-        self.modalities = set(modalities)
-        self.audio_root, self.names, inds, tot, self.sizes = load_audio_visual(manifest_path, max_keep_sample_size, min_keep_sample_size, frame_rate=sample_rate, label_paths=label_paths, label_rates=self.label_rates)
+        # PATCH: modalities None 안전
+        self.modalities = set(modalities or ['audio', 'video'])
+        self.audio_root, self.names, inds, tot, self.sizes, self.fr_ratio = load_audio_visual(
+            manifest_path,
+            max_keep_sample_size,
+            min_keep_sample_size,
+            frame_rate=sample_rate,
+            label_paths=label_paths,
+            label_rates=self.label_rates,
+        )
         self.sample_rate = sample_rate
         self.stack_order_audio = stack_order_audio
         self.shuffle = shuffle
@@ -177,61 +193,84 @@ class AVHubertDataset_mvsr(FairseqDataset):
         self.single_target = single_target
         self.store_labels = store_labels
         self.is_s2s = is_s2s
-        self.noise_wav, self.noise_prob, self.noise_snr, self.noise_num = [ln.strip() for ln in open(noise_fn).readlines()] if noise_fn is not None else [], noise_prob, noise_snr, noise_num
+        self.noise_wav, self.noise_prob, self.noise_snr, self.noise_num = (
+            [ln.strip() for ln in open(noise_fn).readlines()] if noise_fn is not None else [],
+            noise_prob,
+            noise_snr,
+            noise_num,
+        )
 
-        assert self.single_target == (self.label_rates[0] == -1), f"single target should be equivalent to sequence label (label_rate==-1)"
+        assert self.single_target == (self.label_rates[0] == -1), (
+            "single target should be equivalent to sequence label (label_rate==-1)"
+        )
         if store_labels:
             self.label_list = [load_label(p, inds, tot) for p in label_paths]
         else:
             self.label_paths = label_paths
-            self.label_offsets_list = [
-                load_label_offset(p, inds, tot) for p in label_paths
-            ]
-        assert (
-            label_processors is None
-            or len(label_processors) == self.num_labels
-        )
+            self.label_offsets_list = [load_label_offset(p, inds, tot) for p in label_paths]
+        assert (label_processors is None or len(label_processors) == self.num_labels)
         if not skip_verify:
             for label_path, label_rate in zip(label_paths, self.label_rates):
                 verify_label_lengths(self.sizes, self.sample_rate, label_path, label_rate, inds, tot)
         else:
             logger.info(f"Skip label alignment verifying")
 
-        self.max_sample_size = (
-            max_sample_size if max_sample_size is not None else sys.maxsize
-        )
+        self.max_sample_size = max_sample_size if max_sample_size is not None else sys.maxsize
         self.pad_audio = pad_audio
         self.normalize = normalize
         if image_aug:
-            self.transform = custom_utils.Compose([
-                custom_utils.Normalize( 0.0,255.0 ),
-                custom_utils.RandomCrop((image_crop_size, image_crop_size)),
-                custom_utils.HorizontalFlip(0.5),
-                custom_utils.Normalize(image_mean, image_std) ])
+            self.transform = custom_utils.Compose(
+                [
+                    custom_utils.Normalize(0.0, 255.0),
+                    custom_utils.RandomCrop((image_crop_size, image_crop_size)),
+                    custom_utils.HorizontalFlip(0.5),
+                    custom_utils.Normalize(image_mean, image_std),
+                ]
+            )
         else:
-            self.transform = custom_utils.Compose([
-                custom_utils.Normalize( 0.0,255.0 ),
-                custom_utils.CenterCrop((image_crop_size, image_crop_size)),
-                custom_utils.Normalize(image_mean, image_std) ])
+            self.transform = custom_utils.Compose(
+                [
+                    custom_utils.Normalize(0.0, 255.0),
+                    custom_utils.CenterCrop((image_crop_size, image_crop_size)),
+                    custom_utils.Normalize(image_mean, image_std),
+                ]
+            )
         logger.info(f"image transform: {self.transform}")
 
         logger.info(
             f"pad_audio={pad_audio}, random_crop={random_crop}, "
             f"normalize={normalize}, max_sample_size={self.max_sample_size}, "
-            f"seqs2seq data={self.is_s2s},")
+            f"seqs2seq data={self.is_s2s},"
+        )
         logger.info(
             f"Noise wav: {noise_fn}->{len(self.noise_wav)} wav, Prob: {self.noise_prob}, SNR: {self.noise_snr}, Number of mixture: {self.noise_num}"
         )
+
+    @staticmethod  # hard gating 때문에 수정하기
+    def _parse_cs_to_ids(cs: Optional[str]) -> Optional[Tuple[int, int]]:
+        """
+        'fr-en' -> (2, 0) 처럼 바로 ID 튜플로 변환
+        잘못된 입력이면 None 반환
+        """
+        if not cs:
+            return None
+        table = {"en": 0, "it": 1, "fr": 2, "es": 3, "pt": 4}
+        try:
+            a, b = cs.strip().lower().split("-")
+            return (table[a], table[b])
+        except Exception as e:
+            logger.warning(f"[CS] Invalid code_switching='{cs}' (expect 'fr-en'): {e}")
+            return None
 
     def get_label(self, index, label_idx):
         if self.store_labels:
             label = self.label_list[label_idx][index]
         else:
-            with open(self.label_paths[label_idx]) as f:
+            # PATCH: offsets는 바이트 기준이므로 바이너리로 읽고 decode
+            with open(self.label_paths[label_idx], 'rb') as f:
                 offset_s, offset_e = self.label_offsets_list[label_idx][index]
                 f.seek(offset_s)
-                label = f.read(offset_e - offset_s)
-
+                label = f.read(offset_e - offset_s).decode('utf-8')
         if self.label_processors is not None:
             label = self.label_processors[label_idx](label)
         return label
@@ -245,6 +284,7 @@ class AVHubertDataset_mvsr(FairseqDataset):
         Returns:
         video_feats: numpy.ndarray of shape [T, H, W, 1], audio_feats: numpy.ndarray of shape [T, F]
         """
+
         def stacker(feats, stack_order):
             """
             Concatenating consecutive audio frames
@@ -259,39 +299,42 @@ class AVHubertDataset_mvsr(FairseqDataset):
                 res = stack_order - len(feats) % stack_order
                 res = np.zeros([res, feat_dim]).astype(feats.dtype)
                 feats = np.concatenate([feats, res], axis=0)
-            feats = feats.reshape((-1, stack_order, feat_dim)).reshape(-1, stack_order*feat_dim)
+            feats = feats.reshape((-1, stack_order, feat_dim)).reshape(-1, stack_order * feat_dim)
             return feats
+
         video_fn, audio_fn = mix_name
         if 'video' in self.modalities:
-            video_feats = self.load_video(video_fn) # [T, H, W, 1]
+            video_feats = self.load_video(video_fn)  # [T, H, W, 1]
         else:
             video_feats = None
         if 'audio' in self.modalities:
             audio_fn = audio_fn.split(':')[0]
-            audio_npy = audio_fn.replace('.wav','.npy')
-            if os.path.exists(audio_npy) == False:
+            audio_npy = audio_fn.replace('.wav', '.npy')
+            if os.path.exists(audio_npy) is False:
                 sample_rate, wav_data = wavfile.read(audio_fn)
                 assert sample_rate == 16_000 and len(wav_data.shape) == 1
-                #if np.random.rand() < self.noise_prob:
-                #    wav_data = self.add_noise(wav_data)
-                audio_feats = logfbank(wav_data, samplerate=sample_rate).astype(np.float32) # [T, F]
-                audio_feats = stacker(audio_feats, self.stack_order_audio) # [T/stack_order_audio, F*stack_order_audio]
+                # if np.random.rand() < self.noise_prob:
+                #     wav_data = self.add_noise(wav_data)
+                audio_feats = logfbank(wav_data, samplerate=sample_rate).astype(np.float32)  # [T, F]
+                audio_feats = stacker(audio_feats, self.stack_order_audio)  # [T/stack_order_audio, F*stack_order_audio]
                 np.save(audio_npy[:-4], audio_feats)
             else:
                 audio_feats = np.load(audio_npy)
-                
         else:
             audio_feats = None
         if audio_feats is not None and video_feats is not None:
             diff = len(audio_feats) - len(video_feats)
             if diff < 0:
-                audio_feats = np.concatenate([audio_feats, np.zeros([-diff, audio_feats.shape[-1]], dtype=audio_feats.dtype)])
+                audio_feats = np.concatenate(
+                    [audio_feats, np.zeros([-diff, audio_feats.shape[-1]], dtype=audio_feats.dtype)]
+                )
             elif diff > 0:
                 audio_feats = audio_feats[:-diff]
         return video_feats, audio_feats
 
-    def load_video(self, audio_name):
-        feats = custom_utils.load_video(os.path.join(self.audio_root, audio_name))
+    # PATCH: 인자명 정리(실제는 비디오 경로)
+    def load_video(self, video_relpath):
+        feats = custom_utils.load_video(os.path.join(self.audio_root, video_relpath))
         feats = self.transform(feats)
         feats = np.expand_dims(feats, axis=-1)
         return feats
@@ -315,26 +358,28 @@ class AVHubertDataset_mvsr(FairseqDataset):
         if type(self.noise_snr) == int or type(self.noise_snr) == float:
             snr = self.noise_snr
         elif type(self.noise_snr) == tuple:
-            snr = np.random.randint(self.noise_snr[0], self.noise_snr[1]+1)
+            snr = np.random.randint(self.noise_snr[0], self.noise_snr[1] + 1)
         clean_rms = np.sqrt(np.mean(np.square(clean_wav), axis=-1))
         if len(clean_wav) > len(noise_wav):
-            ratio = int(np.ceil(len(clean_wav)/len(noise_wav)))
+            ratio = int(np.ceil(len(clean_wav) / len(noise_wav)))
             noise_wav = np.concatenate([noise_wav for _ in range(ratio)])
         if len(clean_wav) < len(noise_wav):
             start = 0
             noise_wav = noise_wav[start: start + len(clean_wav)]
         noise_rms = np.sqrt(np.mean(np.square(noise_wav), axis=-1))
-        adjusted_noise_rms = clean_rms / (10**(snr/20))
-        adjusted_noise_wav = noise_wav * (adjusted_noise_rms / noise_rms)
+        # PATCH: 0-division 방지
+        eps = 1e-8
+        adjusted_noise_rms = clean_rms / (10 ** (snr / 20))
+        adjusted_noise_wav = noise_wav * (adjusted_noise_rms / (noise_rms + eps))
         mixed = clean_wav + adjusted_noise_wav
 
-        #Avoid clipping noise
+        # Avoid clipping noise
         max_int16 = np.iinfo(np.int16).max
         min_int16 = np.iinfo(np.int16).min
         if mixed.max(axis=0) > max_int16 or mixed.min(axis=0) < min_int16:
-            if mixed.max(axis=0) >= abs(mixed.min(axis=0)): 
+            if mixed.max(axis=0) >= abs(mixed.min(axis=0)):
                 reduction_rate = max_int16 / mixed.max(axis=0)
-            else :
+            else:
                 reduction_rate = min_int16 / mixed.min(axis=0)
             mixed = mixed * (reduction_rate)
         mixed = mixed.astype(np.int16)
@@ -342,15 +387,18 @@ class AVHubertDataset_mvsr(FairseqDataset):
 
     def __getitem__(self, index):
         video_feats, audio_feats = self.load_feature(self.names[index])
-        audio_feats, video_feats = torch.from_numpy(audio_feats.astype(np.float32)) if audio_feats is not None else None, torch.from_numpy(video_feats.astype(np.float32)) if video_feats is not None else None
+        audio_feats, video_feats = (
+            torch.from_numpy(audio_feats.astype(np.float32)) if audio_feats is not None else None,
+            torch.from_numpy(video_feats.astype(np.float32)) if video_feats is not None else None,
+        )
         if self.normalize and 'audio' in self.modalities:
             with torch.no_grad():
                 audio_feats = F.layer_norm(audio_feats, audio_feats.shape[1:])
         labels = self.get_labels(index)
         fid = self.names[index][1].split(':')[1]
-        if 'en' in fid or 'lrs2' in fid or 'lrs3' in fid:
-            lang = 'en'
-        elif 'it' in fid:
+        # PATCH: lang 디폴트 보강(미매칭 방지)
+        lang = 'en'
+        if 'it' in fid:
             lang = 'it'
         elif 'fr' in fid:
             lang = 'fr'
@@ -358,8 +406,20 @@ class AVHubertDataset_mvsr(FairseqDataset):
             lang = 'es'
         elif 'pt' in fid:
             lang = 'pt'
-        
-        return {"id": index, 'fid': fid, "video_source": video_feats, 'audio_source': audio_feats, "label_list": labels, "language":lang}
+        elif ('en' in fid) or ('lrs2' in fid) or ('lrs3' in fid):
+            lang = 'en'
+        result = {
+            "id": index,
+            'fid': fid,
+            "video_source": video_feats,
+            'audio_source': audio_feats,
+            "label_list": labels,
+            "language": lang,
+        }
+        if self.fr_ratio[index] is not None:  # ratio 없을 때 대비해서
+            result['fr_ratio'] = float(self.fr_ratio[index])  # index번째 샘플의 ratio
+
+        return result
 
     def __len__(self):
         return len(self.sizes)
@@ -405,11 +465,8 @@ class AVHubertDataset_mvsr(FairseqDataset):
             collated_videos, padding_mask, audio_starts = self.collater_audio(video_source, audio_size, audio_starts)
         else:
             collated_videos = None
-        targets_by_label = [
-            [s["label_list"][i] for s in samples]
-            for i in range(self.num_labels)
-        ]
-        
+        targets_by_label = [[s["label_list"][i] for s in samples] for i in range(self.num_labels)]
+
         lang_list = [s["language"] for s in samples]
         languages = []
         for lang in lang_list:
@@ -423,41 +480,75 @@ class AVHubertDataset_mvsr(FairseqDataset):
                 languages.append(3)
             elif lang == 'pt':
                 languages.append(4)
-        
-        targets_list, lengths_list, ntokens_list = self.collater_label(
+
+        # -----------------------------------------------------------------
+        #                    frame-wise hard gating ids [B,T]
+        # -----------------------------------------------------------------
+        B, T = len(samples), audio_size
+        has_ratio = any(('fr_ratio' in s) for s in samples)
+        any_ratio = (self.cs_pair_ids is not None) and has_ratio  # PATCH: 안전 가드
+
+        if any_ratio:
+            first_lang_id, second_lang_id = self.cs_pair_ids
+            lang_frame_ids = torch.full((B, T), second_lang_id, dtype=torch.long)  # 기본은 second로 채움
+            _enc_map = {"en": 0, "it": 1, "fr": 2, "es": 3, "pt": 4}
+
+            for i, sample in enumerate(samples):
+                ratio = sample.get('fr_ratio', None)
+                if ratio is None:
+                    # TSV에 ratio가 없으면 해당 샘플의 utt-level 언어로 채움
+                    lang_frame_ids[i, :] = _enc_map.get(lang_list[i], 0)
+                    continue
+
+                # ratio 적용: 앞 r*T 프레임 = first_lang_id, 나머지 = second_lang_id
+                ratio = float(ratio)
+                ratio = max(0.0, min(1.0, ratio))  # clamp
+                k = int(round(ratio * T))
+                if k > 0:
+                    lang_frame_ids[i, :k] = first_lang_id
+        # --------------------------------------------------------------------
+
+        targets_list, prev_output_tokens_list, token_lang_ids_list, lengths_list, ntokens_list = self.collater_label(
             targets_by_label, audio_size, audio_starts, lang_list
         )
-        
+
         source = {"audio": collated_audios, "video": collated_videos}
         net_input = {"source": source, "padding_mask": padding_mask}
         net_input['languages'] = languages
+        if any_ratio:
+            net_input['lang_frame_ids'] = lang_frame_ids  # 프레임별 언어 id 추가 for hard gating
+
         batch = {
             "id": torch.LongTensor([s["id"] for s in samples]),
             "net_input": net_input,
-            "utt_id": [s['fid'] for s in samples]
+            "utt_id": [s['fid'] for s in samples],
         }
 
         if self.single_target:
             batch["target_lengths"] = lengths_list[0]
             batch["ntokens"] = ntokens_list[0]
             if self.is_s2s:
-                batch['target'], net_input['prev_output_tokens'] = targets_list[0][0], targets_list[0][1]
+                batch["target"] = targets_list[0]  # [B, L]
+                net_input["prev_output_tokens"] = prev_output_tokens_list[0]  # [B, L]
+                if token_lang_ids_list[0] is not None:
+                    net_input["token_languages"] = token_lang_ids_list[0]  # [B, L] or None
             else:
                 batch["target"] = targets_list[0]
         else:
             batch["target_lengths_list"] = lengths_list
             batch["ntokens_list"] = ntokens_list
             batch["target_list"] = targets_list
-        
+            if self.is_s2s:
+                net_input["prev_output_tokens_list"] = prev_output_tokens_list
+                if any(x is not None for x in token_lang_ids_list):
+                    net_input["token_languages_list"] = token_lang_ids_list
 
         return batch
 
     def collater_audio(self, audios, audio_size, audio_starts=None):
         audio_feat_shape = list(audios[0].shape[1:])
-        collated_audios = audios[0].new_zeros([len(audios), audio_size]+audio_feat_shape)
-        padding_mask = (
-            torch.BoolTensor(len(audios), audio_size).fill_(False) # 
-        )
+        collated_audios = audios[0].new_zeros([len(audios), audio_size] + audio_feat_shape)
+        padding_mask = torch.BoolTensor(len(audios), audio_size).fill_(False)
         start_known = audio_starts is not None
         audio_starts = [0 for _ in audios] if not start_known else audio_starts
         for i, audio in enumerate(audios):
@@ -466,25 +557,21 @@ class AVHubertDataset_mvsr(FairseqDataset):
                 collated_audios[i] = audio
             elif diff < 0:
                 assert self.pad_audio
-                collated_audios[i] = torch.cat(
-                    [audio, audio.new_full([-diff]+audio_feat_shape, 0.0)]
-                )
+                collated_audios[i] = torch.cat([audio, audio.new_full([-diff] + audio_feat_shape, 0.0)])
                 padding_mask[i, diff:] = True
             else:
                 collated_audios[i], audio_starts[i] = self.crop_to_max_size(
                     audio, audio_size, audio_starts[i] if start_known else None
                 )
         if len(audios[0].shape) == 2:
-            collated_audios = collated_audios.transpose(1, 2) # [B, T, F] -> [B, F, T]
+            collated_audios = collated_audios.transpose(1, 2)  # [B, T, F] -> [B, F, T]
         else:
-            collated_audios = collated_audios.permute((0, 4, 1, 2, 3)).contiguous() # [B, T, H, W, C] -> [B, C, T, H, W]
+            collated_audios = collated_audios.permute((0, 4, 1, 2, 3)).contiguous()  # [B, T, H, W, C] -> [B, C, T, H, W]
         return collated_audios, padding_mask, audio_starts
 
-    def collater_frm_label(
-        self, targets, audio_size, audio_starts, label_rate, pad
-    ):
+    def collater_frm_label(self, targets, audio_size, audio_starts, label_rate, pad):
         assert label_rate > 0
-        s2f = label_rate / self.sample_rate # num label per sample
+        s2f = label_rate / self.sample_rate  # num label per sample
         frm_starts = [int(round(s * s2f)) for s in audio_starts]
         frm_size = int(round(audio_size * s2f))
         if not self.pad_audio:
@@ -497,31 +584,28 @@ class AVHubertDataset_mvsr(FairseqDataset):
 
         lengths = torch.LongTensor([len(t) for t in targets])
         ntokens = lengths.sum().item()
-        targets = data_utils.collate_tokens(
-            targets, pad_idx=pad, left_pad=False
-        )
+        targets = data_utils.collate_tokens(targets, pad_idx=pad, left_pad=False)
         return targets, lengths, ntokens
 
     def collater_seq_label(self, targets, pad):
         lengths = torch.LongTensor([len(t) for t in targets])
         ntokens = lengths.sum().item()
-        targets = data_utils.collate_tokens(
-            targets, pad_idx=pad, left_pad=False
-        )
+        targets = data_utils.collate_tokens(targets, pad_idx=pad, left_pad=False)
         return targets, lengths, ntokens
 
-    def collater_seq_label_s2s(self, targets, pad, lang):
+    def collater_seq_label_s2s(self, targets, pad, lang, lang_list):
         lengths = torch.LongTensor([len(t) for t in targets])
         ntokens = lengths.sum().item()
         pad, eos = self.label_processors[0].dictionary.pad(), self.label_processors[0].dictionary.eos()
-        targets_ = self.collate_tokens(targets, pad_idx=pad, eos_idxs=lang, left_pad=False)
-        prev_output_tokens = self.collate_tokens(targets, pad_idx=pad, eos_idxs=lang, left_pad=False, move_eos_to_beginning=True)
-        #import pdb;pdb.set_trace()
-        return (targets_, prev_output_tokens), lengths, ntokens
+        targets_ = self.collate_tokens(targets, pad_idx=pad, eos_idxs=lang, left_pad=False)  # 정현: lang은 배치크기 B만큼의 언어 ID 리스트
+        prev_output_tokens = self.collate_tokens(
+            targets, pad_idx=pad, eos_idxs=lang, left_pad=False, move_eos_to_beginning=True
+        )
+        token_lang_ids = None
+        return (targets_, prev_output_tokens, token_lang_ids), lengths, ntokens
 
     def collater_label(self, targets_by_label, audio_size, audio_starts, lang_list):
-        targets_list, lengths_list, ntokens_list = [], [], []
-        
+        targets_list, lengths_list, ntokens_list, prev_output_tokens_list, token_lang_ids_list = [], [], [], [], []
         languages = []
         for lang in lang_list:
             if lang == 'en':
@@ -534,25 +618,27 @@ class AVHubertDataset_mvsr(FairseqDataset):
                 languages.append(1003)
             elif lang == 'pt':
                 languages.append(1004)
-        
-        
+
         itr = zip(targets_by_label, self.label_rates, self.pad_list)
-        #import pdb;pdb.set_trace()
         for targets, label_rate, pad in itr:
             if label_rate == -1:
                 if self.is_s2s:
-                    targets, lengths, ntokens = self.collater_seq_label_s2s(targets, pad, languages)
+                    (targets_, prev_output_tokens, token_lang_ids), lengths, ntokens = self.collater_seq_label_s2s(
+                        targets, pad, languages, lang_list
+                    )
+                    targets_list.append(targets_)
+                    prev_output_tokens_list.append(prev_output_tokens)
+                    token_lang_ids_list.append(token_lang_ids)
+                    lengths_list.append(lengths)
+                    ntokens_list.append(ntokens)
                 else:
                     targets, lengths, ntokens = self.collater_seq_label(targets, pad)
             else:
-                targets, lengths, ntokens = self.collater_frm_label(
-                    targets, audio_size, audio_starts, label_rate, pad
-                )
-            #import pdb;pdb.set_trace()
+                targets, lengths, ntokens = self.collater_frm_label(targets, audio_size, audio_starts, label_rate, pad)
             targets_list.append(targets)
             lengths_list.append(lengths)
             ntokens_list.append(ntokens)
-        return targets_list, lengths_list, ntokens_list
+        return targets_list, prev_output_tokens_list, token_lang_ids_list, lengths_list, ntokens_list
 
     def num_tokens(self, index):
         return self.size(index)
@@ -567,11 +653,11 @@ class AVHubertDataset_mvsr(FairseqDataset):
             order = [np.random.permutation(len(self))]
         else:
             order = [np.arange(len(self))]
-
         order.append(self.sizes)
         return np.lexsort(order)[::-1]
 
-    def collate_tokens(self,
+    def collate_tokens(
+        self,
         values,
         pad_idx,
         eos_idxs,
@@ -581,7 +667,6 @@ class AVHubertDataset_mvsr(FairseqDataset):
         pad_to_multiple=1,
         pad_to_bsz=None,
     ):
-        #import pdb;pdb.set_trace()
         """Convert a list of 1d tensors into a padded 2d tensor."""
         size = max(v.size(0) for v in values)
         size = size if pad_to_length is None else max(size, pad_to_length)
@@ -604,6 +689,5 @@ class AVHubertDataset_mvsr(FairseqDataset):
                 dst.copy_(src)
 
         for i, v in enumerate(values):
-            copy_tensor(v, res[i][size - len(v) :] if left_pad else res[i][: len(v)], eos_idxs[i])
+            copy_tensor(v, res[i][size - len(v):] if left_pad else res[i][: len(v)], eos_idxs[i])
         return res
-

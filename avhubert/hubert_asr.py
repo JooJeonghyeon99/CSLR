@@ -31,7 +31,7 @@ else:
     from .decoder import TransformerDecoder
 
 logger = logging.getLogger(__name__)
-
+# print("인코더") #정현
 
 @dataclass
 class AVHubertAsrConfig(FairseqDataclass):

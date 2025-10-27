@@ -318,7 +318,7 @@ class SubModel(nn.Module):
     def __init__(self, resnet=None, input_dim=None, cfg=None):
         super().__init__()
         self.resnet = resnet
-        self.proj = nn.Linear(input_dim, cfg.encoder_embed_dim)
+        self.proj = nn.Linear(input_dim, cfg.encoder_embed_dim) #projection
         self.encoder = TransformerEncoder(cfg) if cfg.encoder_layers > 0 else None
 
     def forward(self, x):

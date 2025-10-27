@@ -295,7 +295,7 @@ class AVHubertDataset(FairseqDataset):
                 audio_feats = audio_feats[:-diff]
         return video_feats, audio_feats
 
-    def load_video(self, audio_name):
+    def load_video(self, audio_name): #(윤진) 비디오 데이터 로딩하는 곳. 해당 root랑 이름바꿔야 할듯
         feats = custom_utils.load_video(os.path.join(self.audio_root, audio_name))
         feats = self.transform(feats)
         feats = np.expand_dims(feats, axis=-1)

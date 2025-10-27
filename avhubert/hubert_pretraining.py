@@ -61,6 +61,10 @@ class LabelEncoderS2SToken(object):
 
 @dataclass
 class AVHubertPretrainingConfig(FairseqDataclass):
+    code_switching: Optional[str] = field(
+        default=None,
+        metadata={"help": "language pair for code-switching, e.g., 'fr-en'"},
+    )
     data: str = field(
         default=MISSING, metadata={"help": "path to data directory"}
     )
@@ -172,12 +176,18 @@ class AVHubertPretrainingTask(FairseqTask):
         logger.info(f"AVHubertPretrainingTask Config {cfg}")
 
         self.fine_tuning = cfg.fine_tuning
+        # self.state.add_factory("target_dictionary", self.load_dictionaries)
+        # self.state.add_factory("s2s_tokenizer", self.load_tokenizer)
+        
         if cfg.fine_tuning:
             self.state.add_factory("target_dictionary", self.load_dictionaries)
             if cfg.is_s2s:
                 self.state.add_factory("s2s_tokenizer", self.load_tokenizer)
         else:
+            # print("***************HEAR")
             self.state.add_factory("dictionaries", self.load_dictionaries)
+        
+        # self.state.add_factory("dictionaries", self.load_dictionaries)
 
         self.blank_symbol = "<s>"
 
@@ -194,11 +204,17 @@ class AVHubertPretrainingTask(FairseqTask):
         return self.state.dictionaries
 
     def load_dictionaries(self):
+        print( "★★load_dictionaries() called")
         label_dir = self.cfg.data if self.cfg.label_dir is None else self.cfg.label_dir
         dictionaries = [
-            Dictionary.load(f"{label_dir}/dict.{label}.txt")
+            Dictionary.load(f"{label_dir}/dict.{label}.txt") #dict.wrd.txt
             for label in self.cfg.labels
         ]
+        # [print(f"{label_dir}/dict.{label}.txt") for label in self.cfg.labels]
+        # for label in self.cfg.labels:
+        #     dict_path = f"{label_dir}/dict.{label}.txt"
+        #     print("★★★",dict_path)
+            
         return dictionaries[0] if self.cfg.fine_tuning else dictionaries
 
     def load_tokenizer(self):
@@ -318,7 +334,7 @@ class AVHubertPretrainingTask(FairseqTask):
         sampling_topk = getattr(args, "sampling_topk", -1)
         sampling_topp = getattr(args, "sampling_topp", -1.0)
         diverse_beam_groups = getattr(args, "diverse_beam_groups", -1)
-        diverse_beam_strength = getattr(args, "diverse_beam_strength", 0.5)
+        diverse_beam_strengeth = getattr(args, "diverse_beam_strength", 0.5)
         match_source_len = getattr(args, "match_source_len", False)
         diversity_rate = getattr(args, "diversity_rate", -1)
         constrained = getattr(args, "constraints", False)
